@@ -49,6 +49,14 @@ CONFIG = {
             "video_tag_selector": "video source, source[src]",
             "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
         },
+        {
+            "name": "AllSex",
+            "url":  "https://allsex.xxx/",
+            "card_selector":      "div.list-videos div.item",
+            "video_tag_selector": "video source, source[src]",
+            "iframe_selector":    "",
+            "pagination_url":     "https://allsex.xxx/latest-updates/{page}/",
+        },
     ],
 }
 
@@ -143,11 +151,20 @@ def scrape_source(session, source, page=1) -> list:
         # Fallback to HTML scraping
         url = source["url"]
         if page > 1:
-            url = url.rstrip("/") + f"/page/{page}/"
+            if "pagination_url" in source:
+                url = source["pagination_url"].format(page=page)
+            else:
+                url = url.rstrip("/") + f"/page/{page}/"
         soup = fetch_soup(session, url)
         if soup:
             for card in soup.select(source["card_selector"]):
-                href = card.get("href", "").strip()
+                href = ""
+                if card.name != "a":
+                    a_tag = card.select_one("a")
+                    if a_tag:
+                        href = a_tag.get("href", "").strip()
+                else:
+                    href = card.get("href", "").strip()
                 if not href or href == "#":
                     continue
                 if href.startswith("/"):
@@ -155,7 +172,14 @@ def scrape_source(session, source, page=1) -> list:
                     href = urljoin(source["url"], href)
                 vid_id = re.sub(r"[^a-zA-Z0-9_-]", "_",
                                 source["name"] + "_" + href.split("//")[-1])[:100]
-                title = card.get("title") or ""
+                
+                # Title resolution
+                title = ""
+                img = card.select_one("img")
+                if img:
+                    title = img.get("alt") or img.get("title") or ""
+                if not title:
+                    title = card.get("title") or ""
                 if not title:
                     parent = card.find_parent("div", class_="video-block")
                     if parent:
@@ -200,8 +224,9 @@ def extract_mp4(session, page_url, source) -> str | None:
                 except Exception:
                     pass
     # C: page regex
-    m = re.findall(MP4_REGEX, str(soup))
-    return m[0].strip() if m else None
+    matches = re.findall(MP4_REGEX, str(soup))
+    valid_matches = [m.strip() for m in matches if "_preview" not in m]
+    return valid_matches[0] if valid_matches else None
 
 
 # ─────────────────────────────────────────────────────────────
