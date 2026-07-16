@@ -184,14 +184,36 @@ def download_video(session, mp4_url, vid_id) -> str | None:
     dl = Path(CONFIG["DOWNLOAD_DIR"])
     dl.mkdir(exist_ok=True)
     dest = dl / f"{vid_id}.mp4"
+    log.info(f"Downloading from: {mp4_url[:120]}")
     try:
         with session.get(mp4_url, stream=True, timeout=90) as r:
             r.raise_for_status()
+            
+            # Content-type validation
+            ctype = r.headers.get("Content-Type", "").lower()
+            if "text/html" in ctype or "text/plain" in ctype:
+                log.warning(f"Skipped download: Content-Type is '{ctype}', not a video.")
+                return None
+                
+            # Content-length validation
+            clength = int(r.headers.get("Content-Length", 0))
+            if clength > 0 and clength < 50 * 1024:
+                log.warning(f"Skipped download: file size is too small ({clength} bytes).")
+                return None
+
             with open(dest, "wb") as f:
                 for chunk in r.iter_content(512 * 1024):
                     f.write(chunk)
-        mb = dest.stat().st_size / 1024 / 1024
-        log.info(f"Downloaded {mb:.1f} MB")
+                    
+        # File size verification
+        actual_size = dest.stat().st_size
+        if actual_size < 50 * 1024:
+            log.warning(f"Skipped download: final file size too small ({actual_size} bytes).")
+            dest.unlink(missing_ok=True)
+            return None
+
+        mb = actual_size / 1024 / 1024
+        log.info(f"Downloaded {mb:.1f} MB successfully.")
         return str(dest)
     except Exception as e:
         log.warning(f"Download failed: {e}")
