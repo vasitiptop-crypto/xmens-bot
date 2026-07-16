@@ -372,14 +372,31 @@ async def main():
                 log.warning("  No MP4 — skipping.")
                 continue
 
-            time.sleep(CONFIG["REQUEST_DELAY"])
-            path = download_video(sess, mp4, video["id"])
-            if not path:
-                log.warning("  Download failed — skipping.")
-                continue
+            ok = False
+            log.info(f"  Attempting direct URL upload: {mp4[:120]}")
+            try:
+                await bot.send_video(
+                    chat_id=CONFIG["CHANNEL_ID"],
+                    video=mp4,
+                    caption="",
+                    supports_streaming=True,
+                    read_timeout=120,
+                    write_timeout=120,
+                    connect_timeout=30,
+                )
+                log.info("  ✅ Direct URL upload succeeded!")
+                ok = True
+            except TelegramError as e:
+                log.warning(f"  Direct URL upload failed: {e}. Falling back to download-and-upload...")
+                
+                time.sleep(CONFIG["REQUEST_DELAY"])
+                path = download_video(sess, mp4, video["id"])
+                if not path:
+                    log.warning("  Download failed — skipping.")
+                    continue
 
-            ok = await send_video(bot, path)
-            Path(path).unlink(missing_ok=True)
+                ok = await send_video(bot, path)
+                Path(path).unlink(missing_ok=True)
 
             if ok:
                 posted.add(video["id"])
