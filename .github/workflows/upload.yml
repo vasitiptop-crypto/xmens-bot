@@ -48,7 +48,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin master     # pull latest before push
           git add posted_videos.json
           git diff --staged --quiet || git commit -m "chore: update posted state [skip ci]"
+          git pull --rebase origin master
           git push
