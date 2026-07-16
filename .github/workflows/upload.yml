@@ -3,7 +3,7 @@ name: 🤖 Auto Video Uploader
 on:
   schedule:
     # Every 5 minutes (GitHub's minimum interval)
-    # = 10 videos every 5 min = ~2,880 videos/day
+    # = 20 videos every 5 min = ~5,760 videos/day
     - cron: "*/5 * * * *"
 
   # Manual trigger from Actions tab anytime
@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   upload:
-    name: Upload 10 Videos
+    name: Upload 20 Videos
     runs-on: ubuntu-latest
-    timeout-minutes: 20       # 10 videos × ~90s each = ~15min max
+    timeout-minutes: 20       # 20 videos max timeout
 
     permissions:
       contents: write

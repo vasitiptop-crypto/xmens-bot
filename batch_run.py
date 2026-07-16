@@ -25,8 +25,8 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003956199030")
 CONFIG = {
     "BOT_TOKEN":        BOT_TOKEN,
     "CHANNEL_ID":       CHANNEL_ID,
-    "VIDEOS_PER_BATCH": 10,       # send 10 per GitHub Actions run (every 5 min)
-    "MAX_SCAN_PER_RUN": 80,        # scan up to 80 cards to find 10 working ones
+    "VIDEOS_PER_BATCH": 20,       # send 20 per GitHub Actions run (every 5 min)
+    "MAX_SCAN_PER_RUN": 120,      # scan up to 120 cards to find 20 working ones
     "REQUEST_DELAY":    2,
 
     # posted_videos.json lives in the repo root so Actions can commit it back
@@ -42,13 +42,13 @@ CONFIG = {
             "video_tag_selector": "video source, source[src]",
             "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
         },
-        # {
-        #     "name": "SiteName",
-        #     "url":  "https://example.com/",
-        #     "card_selector":      "article.post a.thumb",
-        #     "video_tag_selector": "video source",
-        #     "iframe_selector":    None,
-        # },
+        {
+            "name": "MyDesi",
+            "url":  "https://mydesi.rest/",
+            "card_selector":      "div.video-block a.thumb",
+            "video_tag_selector": "video source, source[src]",
+            "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
+        },
     ],
 }
 
