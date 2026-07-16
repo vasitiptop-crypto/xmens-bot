@@ -1,0 +1,20 @@
+# Downloaded videos (temp)
+downloads/
+*.mp4
+
+# Posted video tracker (Railway uses /tmp anyway)
+posted_videos.json
+
+# Logs
+bot.log
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Venv
+venv/
+.venv/
