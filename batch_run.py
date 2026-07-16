@@ -105,8 +105,11 @@ def fetch_soup(session, url):
 # ─────────────────────────────────────────────────────────────
 #  SCRAPE LISTING
 # ─────────────────────────────────────────────────────────────
-def scrape_source(session, source) -> list:
-    soup = fetch_soup(session, source["url"])
+def scrape_source(session, source, page=1) -> list:
+    url = source["url"]
+    if page > 1:
+        url = url.rstrip("/") + f"/page/{page}/"
+    soup = fetch_soup(session, url)
     if not soup:
         return []
     videos = []
@@ -229,16 +232,28 @@ async def main():
     source_queues = {}
     for source in CONFIG["SOURCES"]:
         session = make_session(referer=source["url"])
-        all_vids = scrape_source(session, source)
+        
+        # Scrape page 1
+        all_vids = scrape_source(session, source, page=1)
         new_vids = [v for v in all_vids if v["id"] not in posted]
-        if not new_vids and all_vids:
-            log.info(f"[{source['name']}] No new videos. Falling back to already posted/older videos from the homepage.")
-            import random
-            random.seed(time.time())
-            new_vids = all_vids.copy()
-            random.shuffle(new_vids)
-        else:
-            log.info(f"[{source['name']}] {len(new_vids)} new videos available.")
+        
+        # If we need more videos, traverse older pages to find unique, unposted ones
+        page = 2
+        while len(new_vids) < target and page <= 8:
+            log.info(f"[{source['name']}] Only {len(new_vids)} new videos on page {page-1}. Scraping page {page} for older unposted videos...")
+            time.sleep(CONFIG["REQUEST_DELAY"])
+            page_vids = scrape_source(session, source, page=page)
+            if not page_vids:
+                break
+            new_page_vids = [v for v in page_vids if v["id"] not in posted]
+            if not new_page_vids:
+                # If page 2 has absolutely nothing new, we might be reaching fully posted pages,
+                # but keep going to make sure we scan enough pages.
+                pass
+            new_vids.extend(new_page_vids)
+            page += 1
+
+        log.info(f"[{source['name']}] Total unique unposted videos found: {len(new_vids)}.")
 
         source_queues[source["name"]] = {
             "session": session,
