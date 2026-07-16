@@ -249,7 +249,7 @@ async def main():
         
         # If we need more videos, traverse older pages to find unique, unposted ones
         page = 2
-        while len(new_vids) < target and page <= 8:
+        while len(new_vids) < target and page <= 1000:
             log.info(f"[{source['name']}] Only {len(new_vids)} new videos on page {page-1}. Scraping page {page} for older unposted videos...")
             time.sleep(CONFIG["REQUEST_DELAY"])
             page_vids = scrape_source(session, source, page=page)
