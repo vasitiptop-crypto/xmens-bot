@@ -231,7 +231,15 @@ async def main():
         session = make_session(referer=source["url"])
         all_vids = scrape_source(session, source)
         new_vids = [v for v in all_vids if v["id"] not in posted]
-        log.info(f"[{source['name']}] {len(new_vids)} new videos available.")
+        if not new_vids and all_vids:
+            log.info(f"[{source['name']}] No new videos. Falling back to already posted/older videos from the homepage.")
+            import random
+            random.seed(time.time())
+            new_vids = all_vids.copy()
+            random.shuffle(new_vids)
+        else:
+            log.info(f"[{source['name']}] {len(new_vids)} new videos available.")
+
         source_queues[source["name"]] = {
             "session": session,
             "queue": new_vids[:CONFIG["MAX_SCAN_PER_RUN"]],
