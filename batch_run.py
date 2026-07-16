@@ -116,32 +116,59 @@ def fetch_soup(session, url):
 #  SCRAPE LISTING
 # ─────────────────────────────────────────────────────────────
 def scrape_source(session, source, page=1) -> list:
-    url = source["url"]
-    if page > 1:
-        url = url.rstrip("/") + f"/page/{page}/"
-    soup = fetch_soup(session, url)
-    if not soup:
-        return []
+    # Use WordPress REST API for robust, Cloudflare-challenge-free scraping
+    api_url = source["url"].rstrip("/") + f"/wp-json/wp/v2/posts?page={page}&per_page=20"
     videos = []
-    for card in soup.select(source["card_selector"]):
-        href = card.get("href", "").strip()
-        if not href or href == "#":
-            continue
-        if href.startswith("/"):
-            from urllib.parse import urljoin
-            href = urljoin(source["url"], href)
-        vid_id = re.sub(r"[^a-zA-Z0-9_-]", "_",
-                        source["name"] + "_" + href.split("//")[-1])[:100]
-        title = card.get("title") or ""
-        if not title:
-            parent = card.find_parent("div", class_="video-block")
-            if parent:
-                infos = parent.find("a", class_="infos")
-                if infos:
-                    title = infos.get("title") or infos.get_text(strip=True)
-        videos.append({"id": vid_id, "url": href,
-                       "title": str(title or "Video")[:200], "source": source})
-    log.info(f"[{source['name']}] {len(videos)} cards found.")
+    try:
+        r = session.get(api_url, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        for post in data:
+            title = post.get("title", {}).get("rendered", "")
+            import html
+            title = html.unescape(title)
+            href = post.get("link", "").strip()
+            if not href:
+                continue
+            vid_id = re.sub(r"[^a-zA-Z0-9_-]", "_",
+                            source["name"] + "_" + href.split("//")[-1])[:100]
+            videos.append({
+                "id": vid_id,
+                "url": href,
+                "title": title[:200],
+                "source": source
+            })
+    except Exception as e:
+        log.warning(f"[{source['name']}] REST API failed for page {page}: {e}. Trying fallback HTML scrape...")
+        # Fallback to HTML scraping
+        url = source["url"]
+        if page > 1:
+            url = url.rstrip("/") + f"/page/{page}/"
+        soup = fetch_soup(session, url)
+        if soup:
+            for card in soup.select(source["card_selector"]):
+                href = card.get("href", "").strip()
+                if not href or href == "#":
+                    continue
+                if href.startswith("/"):
+                    from urllib.parse import urljoin
+                    href = urljoin(source["url"], href)
+                vid_id = re.sub(r"[^a-zA-Z0-9_-]", "_",
+                                source["name"] + "_" + href.split("//")[-1])[:100]
+                title = card.get("title") or ""
+                if not title:
+                    parent = card.find_parent("div", class_="video-block")
+                    if parent:
+                        infos = parent.find("a", class_="infos")
+                        if infos:
+                            title = infos.get("title") or infos.get_text(strip=True)
+                videos.append({
+                    "id": vid_id,
+                    "url": href,
+                    "title": str(title or "Video")[:200],
+                    "source": source
+                })
+    log.info(f"[{source['name']}] {len(videos)} videos found on page {page}.")
     return videos
 
 
