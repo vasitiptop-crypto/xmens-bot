@@ -2,52 +2,53 @@ name: 🤖 Auto Video Uploader
 
 on:
   schedule:
-    # Runs every 5 minutes (GitHub's minimum interval)
-    # = 2 videos uploaded every 5 minutes = ~576 videos/day
+    # Every 5 minutes (GitHub's minimum interval)
+    # = 10 videos every 5 min = ~2,880 videos/day
     - cron: "*/5 * * * *"
 
-  # Also allows manual trigger from GitHub Actions tab
+  # Manual trigger from Actions tab anytime
   workflow_dispatch:
+
+# Prevent two runs from committing posted_videos.json at the same time
+concurrency:
+  group: video-upload
+  cancel-in-progress: false   # let current run finish, queue the next
 
 jobs:
   upload:
-    name: Upload 2 Videos
+    name: Upload 10 Videos
     runs-on: ubuntu-latest
-    timeout-minutes: 8     # kill if it hangs (safety net)
+    timeout-minutes: 20       # 10 videos × ~90s each = ~15min max
 
     permissions:
-      contents: write      # needed to commit posted_videos.json back
+      contents: write
 
     steps:
-      # 1. Checkout the repo (including posted_videos.json for state)
-      - name: Checkout repo
+      - name: ⬇️ Checkout repo
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2. Set up Python
-      - name: Set up Python 3.12
+      - name: 🐍 Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
 
-      # 3. Install dependencies
-      - name: Install dependencies
+      - name: 📦 Install dependencies
         run: pip install -r requirements.txt
 
-      # 4. Run the bot batch (uploads 2 videos)
-      - name: Run batch upload
+      - name: 🚀 Upload 10 videos to channel
         env:
           BOT_TOKEN:  ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         run: python batch_run.py
 
-      # 5. Commit posted_videos.json back so next run knows what was already posted
-      - name: Save posted video state
+      - name: 💾 Save posted-video state back to repo
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin master     # pull latest before push
           git add posted_videos.json
-          git diff --staged --quiet || git commit -m "chore: update posted videos state [skip ci]"
+          git diff --staged --quiet || git commit -m "chore: update posted state [skip ci]"
           git push

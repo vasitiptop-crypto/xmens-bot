@@ -25,8 +25,8 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003956199030")
 CONFIG = {
     "BOT_TOKEN":        BOT_TOKEN,
     "CHANNEL_ID":       CHANNEL_ID,
-    "VIDEOS_PER_BATCH": 2,        # send 2 per GitHub Actions run (every 5 min)
-    "MAX_SCAN_PER_RUN": 40,       # scan up to 40 cards to find 2 working ones
+    "VIDEOS_PER_BATCH": 10,       # send 10 per GitHub Actions run (every 5 min)
+    "MAX_SCAN_PER_RUN": 80,        # scan up to 80 cards to find 10 working ones
     "REQUEST_DELAY":    2,
 
     # posted_videos.json lives in the repo root so Actions can commit it back
@@ -228,35 +228,70 @@ async def main():
     target = CONFIG["VIDEOS_PER_BATCH"]
     sent   = 0
 
-    log.info(f"=== Batch run | target={target} | posted={len(posted)} ===")
+    log.info(f"=== Batch run | target={target} | already posted={len(posted)} ===")
+    log.info(f"Sources: {[s['name'] for s in CONFIG['SOURCES']]}")
 
+    # Build a combined pool from ALL sources, round-robin style
+    # so every site gets a fair chance to contribute videos
+    source_queues = {}
     for source in CONFIG["SOURCES"]:
-        if sent >= target:
-            break
-        session  = make_session(referer=source["url"])
+        session = make_session(referer=source["url"])
         all_vids = scrape_source(session, source)
         new_vids = [v for v in all_vids if v["id"] not in posted]
+        log.info(f"[{source['name']}] {len(new_vids)} new videos available.")
+        source_queues[source["name"]] = {
+            "session": session,
+            "queue": new_vids[:CONFIG["MAX_SCAN_PER_RUN"]],
+        }
 
-        for video in new_vids[:CONFIG["MAX_SCAN_PER_RUN"]]:
+    # Round-robin: pick one from each source in turn until target reached
+    source_names = list(source_queues.keys())
+    attempts = 0
+    max_attempts = CONFIG["MAX_SCAN_PER_RUN"] * len(source_names)
+
+    while sent < target and attempts < max_attempts:
+        made_progress = False
+        for sname in source_names:
             if sent >= target:
                 break
-            log.info(f"[{sent+1}/{target}] {video['title'][:60]}")
+            q = source_queues[sname]["queue"]
+            sess = source_queues[sname]["session"]
+            if not q:
+                continue
+
+            video = q.pop(0)
+            attempts += 1
+            made_progress = True
+            log.info(f"[{sent+1}/{target}] [{sname}] {video['title'][:55]}")
+
             time.sleep(CONFIG["REQUEST_DELAY"])
-            mp4 = extract_mp4(session, video["url"], video["source"])
+            mp4 = extract_mp4(sess, video["url"], video["source"])
             if not mp4:
+                log.warning("  No MP4 — skipping.")
                 continue
+
             time.sleep(CONFIG["REQUEST_DELAY"])
-            path = download_video(session, mp4, video["id"])
+            path = download_video(sess, mp4, video["id"])
             if not path:
+                log.warning("  Download failed — skipping.")
                 continue
+
             ok = await send_video(bot, path)
             Path(path).unlink(missing_ok=True)
+
             if ok:
                 posted.add(video["id"])
                 save_posted(posted)
                 sent += 1
+            else:
+                log.warning("  Upload failed — skipping.")
 
-    log.info(f"=== Done: {sent}/{target} sent ===")
+        if not made_progress:
+            log.warning("All source queues exhausted before reaching target.")
+            break
+
+    log.info(f"=== Done: {sent}/{target} videos sent ===")
+
 
 
 if __name__ == "__main__":
