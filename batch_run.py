@@ -199,14 +199,65 @@ def download_video(session, mp4_url, vid_id) -> str | None:
         return None
 
 
+import subprocess
+
+def get_video_metadata(path: str) -> dict:
+    """Uses ffprobe to extract duration, width, and height."""
+    try:
+        cmd = [
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_streams", "-show_format", path
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if res.returncode == 0:
+            data = json.loads(res.stdout)
+            for stream in data.get("streams", []):
+                if stream.get("codec_type") == "video":
+                    width = int(stream.get("width", 0))
+                    height = int(stream.get("height", 0))
+                    duration = float(stream.get("duration", 0) or data.get("format", {}).get("duration", 0))
+                    return {"width": width, "height": height, "duration": int(duration)}
+    except Exception as e:
+        log.warning(f"ffprobe failed: {e}")
+    return {}
+
+def optimize_video(input_path: str) -> str:
+    """Relocates the moov atom to the beginning of the MP4 file for fast start streaming."""
+    output_path = input_path.replace(".mp4", "_optimized.mp4")
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-c", "copy", "-movflags", "+faststart",
+            output_path
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=45)
+        if res.returncode == 0 and os.path.exists(output_path):
+            log.info(f"Relocated moov atom successfully: {os.path.basename(output_path)}")
+            os.replace(output_path, input_path)
+            return input_path
+    except Exception as e:
+        log.warning(f"ffmpeg failed: {e}")
+        if os.path.exists(output_path):
+            os.unlink(output_path)
+    return input_path
+
+
 # ─────────────────────────────────────────────────────────────
 #  UPLOAD (no caption)
 # ─────────────────────────────────────────────────────────────
 async def send_video(bot: Bot, path: str) -> bool:
+    # 1. Optimize video for streaming
+    path = optimize_video(path)
+
     mb = Path(path).stat().st_size / 1024 / 1024
     if mb > 49:
         log.warning(f"Too large ({mb:.1f} MB) — skipping.")
         return False
+
+    # 2. Get video metadata
+    metadata = get_video_metadata(path)
+    log.info(f"Video metadata: {metadata}")
+
     try:
         with open(path, "rb") as f:
             await bot.send_video(
@@ -214,6 +265,9 @@ async def send_video(bot: Bot, path: str) -> bool:
                 video=f,
                 caption="",
                 supports_streaming=True,
+                width=metadata.get("width"),
+                height=metadata.get("height"),
+                duration=metadata.get("duration"),
                 read_timeout=120,
                 write_timeout=120,
                 connect_timeout=30,
