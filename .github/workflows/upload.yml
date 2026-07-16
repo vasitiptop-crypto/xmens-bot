@@ -41,7 +41,7 @@ jobs:
       - name: 📦 Install dependencies
         run: pip install -r requirements.txt
 
-      - name: 🚀 Upload 10 videos to channel
+      - name: 🚀 Upload 20 videos to channel
         env:
           BOT_TOKEN:  ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}

@@ -112,7 +112,7 @@ def make_session(referer="") -> requests.Session:
 
 def fetch_soup(session, url):
     try:
-        r = session.get(url, timeout=15)
+        r = session.get(url, timeout=10)
         r.raise_for_status()
         return BeautifulSoup(r.text, "html.parser")
     except Exception as e:
@@ -238,7 +238,7 @@ def download_video(session, mp4_url, vid_id) -> str | None:
     dest = dl / f"{vid_id}.mp4"
     log.info(f"Downloading from: {mp4_url[:120]}")
     try:
-        with session.get(mp4_url, stream=True, timeout=90) as r:
+        with session.get(mp4_url, stream=True, timeout=60) as r:
             r.raise_for_status()
             
             # Content-type validation
@@ -254,7 +254,7 @@ def download_video(session, mp4_url, vid_id) -> str | None:
                 return None
 
             with open(dest, "wb") as f:
-                for chunk in r.iter_content(512 * 1024):
+                for chunk in r.iter_content(2 * 1024 * 1024):
                     f.write(chunk)
                     
         # File size verification
@@ -301,19 +301,19 @@ def compress_video(input_path: str, duration: float) -> str | None:
         return None
         
     output_path = input_path.replace(".mp4", "_compressed.mp4")
-    # Target size: 48.0 MB to be safe
-    target_size_bytes = 48.0 * 1024 * 1024
+    # Target size: 48.5 MB to be safe
+    target_size_bytes = 48.5 * 1024 * 1024
     
     # Calculate target bitrate (bits per second)
     total_bitrate = (target_size_bytes * 8) / duration
     
-    # Reserve 128k for audio
-    audio_bitrate = 128 * 1024
+    # Reserve 64k for audio (smaller = faster)
+    audio_bitrate = 64 * 1024
     video_bitrate = int(total_bitrate - audio_bitrate)
     
-    # Ensure video bitrate is reasonable (minimum 150 kbps)
-    if video_bitrate < 150 * 1024:
-        video_bitrate = 150 * 1024
+    # Ensure video bitrate is reasonable (minimum 100 kbps)
+    if video_bitrate < 100 * 1024:
+        video_bitrate = 100 * 1024
         
     log.info(f"Compressing {os.path.basename(input_path)} to fit under 49MB (duration={duration:.1f}s, target_bitrate={video_bitrate//1024}k)...")
     
@@ -330,11 +330,11 @@ def compress_video(input_path: str, duration: float) -> str | None:
             "-profile:v", "high",
             "-level:v", "4.0",
             "-c:a", "aac",
-            "-b:a", "128k",
+            "-b:a", "64k",
             "-movflags", "+faststart",
             output_path
         ]
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
         if res.returncode == 0 and os.path.exists(output_path):
             compressed_mb = os.path.getsize(output_path) / 1024 / 1024
             log.info(f"Compression completed successfully. Compressed size: {compressed_mb:.1f} MB")
@@ -376,7 +376,9 @@ async def send_video(bot: Bot, path: str) -> bool:
     log.info(f"Original video metadata: {metadata}")
 
     mb = Path(path).stat().st_size / 1024 / 1024
-    if mb > 49:
+    need_compress = mb > 49
+    
+    if need_compress:
         log.info(f"File is {mb:.1f} MB (exceeds 49MB limit). Starting compression...")
         duration = metadata.get("duration", 0)
         if duration > 0:
@@ -384,7 +386,6 @@ async def send_video(bot: Bot, path: str) -> bool:
             if compressed_path:
                 path = compressed_path
                 mb = Path(path).stat().st_size / 1024 / 1024
-                # Re-read metadata for the compressed file
                 metadata = get_video_metadata(path)
             else:
                 log.warning("Compression failed. Skipping file.")
@@ -393,8 +394,9 @@ async def send_video(bot: Bot, path: str) -> bool:
             log.warning("Unknown video duration. Skipping file.")
             return False
 
-    # 2. Optimize video for streaming
-    path = optimize_video(path)
+    # 2. Optimize video for streaming (skip if compress already added faststart)
+    if not need_compress:
+        path = optimize_video(path)
 
     try:
         with open(path, "rb") as f:
