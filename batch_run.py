@@ -42,6 +42,13 @@ CONFIG = {
             "video_tag_selector": "video source, source[src]",
             "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
         },
+        {
+            "name": "ViralKand",
+            "url":  "https://viralkand.best/",
+            "card_selector":      "article.loop-video a",
+            "video_tag_selector": "video source, source[src]",
+            "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
+        },
     ],
 }
 
