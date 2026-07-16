@@ -48,7 +48,28 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin master
+          python -c "
+          import json, subprocess
+          from pathlib import Path
+          local_path = Path('posted_videos.json')
+          remote_json = {'posted': []}
+          try:
+              res = subprocess.run(['git', 'show', 'origin/master:posted_videos.json'], capture_output=True, text=True)
+              if res.returncode == 0:
+                  remote_json = json.loads(res.stdout)
+          except Exception:
+              pass
+          local_json = {'posted': []}
+          if local_path.exists():
+              try:
+                  local_json = json.loads(local_path.read_text())
+              except Exception:
+                  pass
+          merged = sorted(list(set(remote_json.get('posted', [])) | set(local_json.get('posted', []))))
+          local_path.write_text(json.dumps({'posted': merged}, indent=2))
+          "
+          git reset origin/master
           git add posted_videos.json
           git diff --staged --quiet || git commit -m "chore: update posted state [skip ci]"
-          git pull --rebase origin master
-          git push
+          git push origin HEAD:master
