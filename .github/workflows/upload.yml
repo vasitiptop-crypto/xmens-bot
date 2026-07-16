@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   upload:
-    name: Upload 20 Videos
+    name: Upload 10 Videos
     runs-on: ubuntu-latest
     timeout-minutes: 20       # 20 videos max timeout
 

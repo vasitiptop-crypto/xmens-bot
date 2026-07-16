@@ -25,8 +25,8 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003956199030")
 CONFIG = {
     "BOT_TOKEN":        BOT_TOKEN,
     "CHANNEL_ID":       CHANNEL_ID,
-    "VIDEOS_PER_BATCH": 20,       # send 20 per GitHub Actions run (every 5 min)
-    "MAX_SCAN_PER_RUN": 120,      # scan up to 120 cards to find 20 working ones
+    "VIDEOS_PER_BATCH": 10,       # send 10 per GitHub Actions run (every 5 min)
+    "MAX_SCAN_PER_RUN": 120,      # scan up to 120 cards to find 10 working ones
     "REQUEST_DELAY":    2,
 
     # posted_videos.json lives in the repo root so Actions can commit it back
