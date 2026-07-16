@@ -298,6 +298,8 @@ def compress_video(input_path: str, duration: float) -> str | None:
             "-b:v", f"{video_bitrate}",
             "-maxrate", f"{video_bitrate}",
             "-bufsize", f"{video_bitrate * 2}",
+            "-preset", "ultrafast",
+            "-threads", "0",
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             "-profile:v", "high",
@@ -307,7 +309,7 @@ def compress_video(input_path: str, duration: float) -> str | None:
             "-movflags", "+faststart",
             output_path
         ]
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
         if res.returncode == 0 and os.path.exists(output_path):
             compressed_mb = os.path.getsize(output_path) / 1024 / 1024
             log.info(f"Compression completed successfully. Compressed size: {compressed_mb:.1f} MB")
