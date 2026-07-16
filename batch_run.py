@@ -36,13 +36,6 @@ CONFIG = {
     # ── ADD MORE SITES HERE ───────────────────────────────────
     "SOURCES": [
         {
-            "name": "AuntyMazaX",
-            "url":  "https://auntymazax30.watch/",
-            "card_selector":      "div.video-block a.thumb",
-            "video_tag_selector": "video source, source[src]",
-            "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
-        },
-        {
             "name": "MyDesi",
             "url":  "https://mydesi.rest/",
             "card_selector":      "div.video-block a.thumb",

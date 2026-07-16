@@ -2,8 +2,6 @@
 downloads/
 *.mp4
 
-# Posted video tracker (Railway uses /tmp anyway)
-posted_videos.json
 
 # Logs
 bot.log
