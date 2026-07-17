@@ -1,7 +1,7 @@
 """
-batch_run.py — Single-run script for GitHub Actions/Hugging Face.
+batch_run.py — Single-run script for GitHub Actions/Hugging Face/Serv00.
 Sends up to BATCH_SIZE videos then exits.
-State (posted_videos.json) is committed back to the repo or saved locally.
+State (posted_videos.json) is saved locally.
 """
 
 import asyncio
@@ -15,9 +15,18 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from telegram import Bot
 from telegram.error import TelegramError
+from dotenv import load_dotenv
+import shutil
+
+# Load environment variables from local .env config
+load_dotenv()
+
+# Dynamic path resolution for FFmpeg and FFprobe (highly robust for VPS/Serv00)
+FFMPEG_PATH = shutil.which("ffmpeg") or "/usr/local/bin/ffmpeg"
+FFPROBE_PATH = shutil.which("ffprobe") or "/usr/local/bin/ffprobe"
 
 # ─────────────────────────────────────────────────────────────
-#  CONFIG — reads from Hugging Face secrets (env vars)
+#  CONFIG — reads from environment variables
 # ─────────────────────────────────────────────────────────────
 BOT_TOKEN  = os.environ.get("BOT_TOKEN",  "8815719330:AAG2ZB8Helpzr1OKE65D_JXN19fWuZes9c8")
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003956199030")
@@ -279,7 +288,7 @@ def get_video_metadata(path: str) -> dict:
     """Uses ffprobe to extract duration, width, and height."""
     try:
         cmd = [
-            "ffprobe", "-v", "quiet", "-print_format", "json",
+            FFPROBE_PATH, "-v", "quiet", "-print_format", "json",
             "-show_streams", "-show_format", path
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
@@ -319,7 +328,7 @@ def compress_video(input_path: str, duration: float) -> str | None:
     
     try:
         cmd = [
-            "ffmpeg", "-y", "-i", input_path,
+            FFMPEG_PATH, "-y", "-i", input_path,
             "-vf", "scale='min(640,iw)':-2",
             "-b:v", f"{video_bitrate}",
             "-maxrate", f"{video_bitrate}",
@@ -352,7 +361,7 @@ def optimize_video(input_path: str) -> str:
     output_path = input_path.replace(".mp4", "_optimized.mp4")
     try:
         cmd = [
-            "ffmpeg", "-y", "-i", input_path,
+            FFMPEG_PATH, "-y", "-i", input_path,
             "-c", "copy", "-movflags", "+faststart",
             output_path
         ]

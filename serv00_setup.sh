@@ -23,7 +23,6 @@ fi
 echo "--> Upgrading pip and installing requirements..."
 venv/bin/pip install --upgrade pip
 venv/bin/pip install -r requirements.txt
-venv/bin/pip install python-dotenv
 
 # 3. Create .env configuration
 ENV_FILE="$APP_DIR/.env"
