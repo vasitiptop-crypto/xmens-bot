@@ -34,9 +34,9 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID") or "-1003956199030"
 CONFIG = {
     "BOT_TOKEN":        BOT_TOKEN,
     "CHANNEL_ID":       CHANNEL_ID,
-    "VIDEOS_PER_BATCH": 10,       # send 10 per Hugging Face run
-    "MAX_SCAN_PER_RUN": 100,      # scan up to 100 cards to find 10 working ones
-    "REQUEST_DELAY":    0.5,
+    "VIDEOS_PER_BATCH": 20,       # send 20 per run for fast continuous uploads
+    "MAX_SCAN_PER_RUN": 200,      # scan up to 200 cards to find working ones
+    "REQUEST_DELAY":    0.2,
 
     # database file
     "POSTED_DB":     "posted_videos.json",
@@ -45,19 +45,11 @@ CONFIG = {
     # ── ADD MORE SITES HERE ───────────────────────────────────
     "SOURCES": [
         {
-            "name": "ViralKand",
-            "url":  "https://viralkand.best/",
-            "card_selector":      "article.loop-video a",
-            "video_tag_selector": "video source, source[src]",
-            "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
-        },
-        {
-            "name": "AllSex",
-            "url":  "https://allsex.xxx/",
-            "card_selector":      "div.list-videos div.item",
+            "name": "DarkEro",
+            "url":  "https://darkero.com/",
+            "card_selector":      "h2.entry-title a",
             "video_tag_selector": "video source, source[src]",
             "iframe_selector":    "",
-            "pagination_url":     "https://allsex.xxx/latest-updates/{page}/",
         },
         {
             "name": "SexyVideoIndian",
