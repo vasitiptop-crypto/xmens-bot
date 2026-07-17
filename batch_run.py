@@ -119,14 +119,54 @@ def make_session(referer="") -> requests.Session:
     return s
 
 
-def fetch_soup(session, url):
+FREE_PROXIES = []
+
+def get_free_proxies():
+    global FREE_PROXIES
+    if FREE_PROXIES:
+        return FREE_PROXIES
+        
+    log.info("Fetching free proxy list for firewall bypass...")
+    api_url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=yes&anonymity=all"
     try:
-        r = session.get(url, timeout=10)
+        r = requests.get(api_url, timeout=10)
+        FREE_PROXIES = [p.strip() for p in r.text.split("\n") if p.strip()]
+        log.info(f"Fetched {len(FREE_PROXIES)} free proxies.")
+    except Exception as e:
+        log.warning(f"Failed to fetch free proxies: {e}")
+    return FREE_PROXIES
+
+def fetch_soup(session, url):
+    # 1. Try direct fetch first
+    try:
+        r = session.get(url, timeout=8)
         r.raise_for_status()
         return BeautifulSoup(r.text, "html.parser")
     except Exception as e:
-        log.warning(f"Fetch failed {url}: {e}")
+        log.warning(f"Direct fetch failed for {url}: {e}. Retrying with free proxies...")
+        
+    # 2. Try proxy fetch fallback
+    proxies_list = get_free_proxies()
+    if not proxies_list:
         return None
+        
+    # Try up to 15 proxies
+    for p in proxies_list[:15]:
+        log.info(f"Trying proxy {p} for {url}...")
+        try:
+            px = {"http": f"http://{p}", "https": f"http://{p}"}
+            # Use direct requests call with proxy to avoid session conflicts
+            r = requests.get(url, headers={"User-Agent": USER_AGENT}, proxies=px, timeout=6)
+            if r.status_code == 200:
+                log.info(f"✅ Proxy fetch succeeded using {p}!")
+                return BeautifulSoup(r.text, "html.parser")
+            else:
+                log.warning(f"Proxy {p} returned status code {r.status_code}")
+        except Exception as ex:
+            log.debug(f"Proxy {p} failed: {ex}")
+            
+    log.error(f"All proxies failed to fetch {url}.")
+    return None
 
 
 # ─────────────────────────────────────────────────────────────
