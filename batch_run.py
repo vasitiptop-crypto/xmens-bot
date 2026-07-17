@@ -347,8 +347,8 @@ def download_video(session, mp4_url, vid_id) -> str | None:
             # Content-length validation
             clength = int(r.headers.get("Content-Length", 0))
             if clength > 0:
-                if clength < 50 * 1024:
-                    log.warning(f"Skipped download: file size is too small ({clength} bytes).")
+                if clength < 1024 * 1024:
+                    log.warning(f"Skipped download: file size is too small ({clength} bytes). Must be >= 1MB.")
                     return None
                 if clength > 50 * 1024 * 1024:
                     log.warning(f"Skipped download: file size exceeds 50MB limit ({clength / 1024 / 1024:.1f} MB).")
@@ -366,8 +366,8 @@ def download_video(session, mp4_url, vid_id) -> str | None:
                     
         # File size verification
         actual_size = dest.stat().st_size
-        if actual_size < 50 * 1024:
-            log.warning(f"Skipped download: final file size too small ({actual_size} bytes).")
+        if actual_size < 1024 * 1024:
+            log.warning(f"Skipped download: final file size too small ({actual_size} bytes). Must be >= 1MB.")
             dest.unlink(missing_ok=True)
             return None
 
@@ -383,7 +383,7 @@ def download_video(session, mp4_url, vid_id) -> str | None:
 import subprocess
 
 def get_video_metadata(path: str) -> dict:
-    """Uses ffprobe to extract duration, width, and height."""
+    """Uses ffprobe to extract duration, width, height, and check for an audio track."""
     try:
         cmd = [
             FFPROBE_PATH, "-v", "quiet", "-print_format", "json",
@@ -392,12 +392,20 @@ def get_video_metadata(path: str) -> dict:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         if res.returncode == 0:
             data = json.loads(res.stdout)
+            has_audio = False
+            metadata = {}
             for stream in data.get("streams", []):
-                if stream.get("codec_type") == "video":
+                codec_type = stream.get("codec_type")
+                if codec_type == "audio":
+                    has_audio = True
+                elif codec_type == "video" and not metadata:
                     width = int(stream.get("width", 0))
                     height = int(stream.get("height", 0))
                     duration = float(stream.get("duration", 0) or data.get("format", {}).get("duration", 0))
-                    return {"width": width, "height": height, "duration": int(duration)}
+                    metadata = {"width": width, "height": height, "duration": int(duration)}
+            if metadata:
+                metadata["has_audio"] = has_audio
+                return metadata
     except Exception as e:
         log.warning(f"ffprobe failed: {e}")
     return {}
@@ -431,6 +439,21 @@ async def send_video(bot: Bot, path: str) -> bool:
     loop = asyncio.get_running_loop()
     metadata = await loop.run_in_executor(None, get_video_metadata, path)
     log.info(f"Original video metadata: {metadata}")
+
+    if not metadata:
+        log.warning(f"Skipped upload: Could not read video metadata for {path}.")
+        return False
+
+    # Filter out GIF/silent videos
+    if not metadata.get("has_audio", False):
+        log.warning(f"Skipped upload: Video has no audio track (GIF-like) for {path}.")
+        return False
+
+    # Filter out short preview clips
+    duration = metadata.get("duration", 0)
+    if duration < 15:
+        log.warning(f"Skipped upload: Video is too short ({duration}s < 15s) for {path}.")
+        return False
 
     # Optimize video for streaming
     path = await loop.run_in_executor(None, optimize_video, path)
@@ -478,33 +501,9 @@ async def process_and_upload_video(bot: Bot, session, video: dict) -> bool:
         log.warning(f"[{video['id']}] No MP4 URL extracted — skipping.")
         return False
 
-    # 2. Try direct URL upload first (async) with rate-limit retry
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        log.info(f"[{video['id']}] Attempting direct URL upload (Attempt {attempt+1}/{max_attempts}): {mp4[:80]}...")
-        try:
-            await bot.send_video(
-                chat_id=CONFIG["CHANNEL_ID"],
-                video=mp4,
-                caption="",
-                supports_streaming=True,
-                read_timeout=120,
-                write_timeout=120,
-                connect_timeout=30,
-            )
-            log.info(f"[{video['id']}] ✅ Direct URL upload succeeded!")
-            return True
-        except RetryAfter as e:
-            wait_time = e.retry_after + 2
-            log.warning(f"[{video['id']}] Rate limit hit! Sleeping for {wait_time}s before retry...")
-            await asyncio.sleep(wait_time)
-        except TelegramError as e:
-            log.warning(f"[{video['id']}] Direct URL upload failed: {e}. Falling back to download-and-upload...")
-            break
-
-    # 3. Fallback to download, compress (controlled by semaphore), and upload
+    # 2. Download, check metadata (gifs/previews filtering), optimize and upload
     async with compress_semaphore:
-        log.info(f"[{video['id']}] Downloading video for local processing...")
+        log.info(f"[{video['id']}] Downloading video for local processing & verification...")
         path = await loop.run_in_executor(None, download_video, session, mp4, video["id"])
         if not path:
             log.warning(f"[{video['id']}] Download failed — skipping.")
