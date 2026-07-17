@@ -45,13 +45,6 @@ CONFIG = {
     # ── ADD MORE SITES HERE ───────────────────────────────────
     "SOURCES": [
         {
-            "name": "MyDesi",
-            "url":  "https://mydesi.rest/",
-            "card_selector":      "div.video-block a.thumb",
-            "video_tag_selector": "video source, source[src]",
-            "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
-        },
-        {
             "name": "ViralKand",
             "url":  "https://viralkand.best/",
             "card_selector":      "article.loop-video a",
@@ -65,6 +58,20 @@ CONFIG = {
             "video_tag_selector": "video source, source[src]",
             "iframe_selector":    "",
             "pagination_url":     "https://allsex.xxx/latest-updates/{page}/",
+        },
+        {
+            "name": "SexyVideoIndian",
+            "url":  "https://www.sexyvideoindian.com/",
+            "card_selector":      "div.video-block a.thumb, div.post-card a, article a",
+            "video_tag_selector": "video source, source[src]",
+            "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
+        },
+        {
+            "name": "DesiMMS",
+            "url":  "https://www.desimms.com.co/",
+            "card_selector":      "div.video-block a.thumb, div.post-card a, article.loop-video a",
+            "video_tag_selector": "video source, source[src]",
+            "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
         },
     ],
 }
@@ -392,17 +399,19 @@ async def send_video(bot: Bot, path: str) -> bool:
     if need_compress:
         log.info(f"File is {mb:.1f} MB (exceeds 49MB limit). Starting compression...")
         duration = metadata.get("duration", 0)
-        if duration > 0:
-            compressed_path = await loop.run_in_executor(None, compress_video, path, duration)
-            if compressed_path:
-                path = compressed_path
-                mb = Path(path).stat().st_size / 1024 / 1024
-                metadata = await loop.run_in_executor(None, get_video_metadata, path)
-            else:
-                log.warning("Compression failed. Skipping file.")
-                return False
+        if duration <= 0:
+            # Fallback estimation: Assume a standard average streaming bitrate of 1.2 Mbps (150 KB/s)
+            file_size_bytes = Path(path).stat().st_size
+            duration = max(10.0, file_size_bytes / (150 * 1024))
+            log.info(f"ffprobe failed or returned 0 duration. Estimating duration as {duration:.1f}s based on file size.")
+            
+        compressed_path = await loop.run_in_executor(None, compress_video, path, duration)
+        if compressed_path:
+            path = compressed_path
+            mb = Path(path).stat().st_size / 1024 / 1024
+            metadata = await loop.run_in_executor(None, get_video_metadata, path)
         else:
-            log.warning("Unknown video duration. Skipping file.")
+            log.warning("Compression failed. Skipping file.")
             return False
 
     # 2. Optimize video for streaming (skip if compress already added faststart)
