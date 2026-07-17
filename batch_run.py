@@ -1,7 +1,7 @@
 """
-batch_run.py — Single-run script for GitHub Actions.
+batch_run.py — Single-run script for GitHub Actions/Hugging Face.
 Sends up to BATCH_SIZE videos then exits.
-State (posted_videos.json) is committed back to the repo by the workflow.
+State (posted_videos.json) is committed back to the repo or saved locally.
 """
 
 import asyncio
@@ -17,7 +17,7 @@ from telegram import Bot
 from telegram.error import TelegramError
 
 # ─────────────────────────────────────────────────────────────
-#  CONFIG — reads from GitHub Actions secrets (env vars)
+#  CONFIG — reads from Hugging Face secrets (env vars)
 # ─────────────────────────────────────────────────────────────
 BOT_TOKEN  = os.environ.get("BOT_TOKEN",  "8815719330:AAG2ZB8Helpzr1OKE65D_JXN19fWuZes9c8")
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003956199030")
@@ -25,11 +25,11 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003956199030")
 CONFIG = {
     "BOT_TOKEN":        BOT_TOKEN,
     "CHANNEL_ID":       CHANNEL_ID,
-    "VIDEOS_PER_BATCH": 20,       # send 20 per GitHub Actions run (every 5 min)
+    "VIDEOS_PER_BATCH": 20,       # send 20 per Hugging Face run
     "MAX_SCAN_PER_RUN": 200,      # scan up to 200 cards to find 20 working ones
     "REQUEST_DELAY":    0.5,
 
-    # posted_videos.json lives in the repo root so Actions can commit it back
+    # database file
     "POSTED_DB":     "posted_videos.json",
     "DOWNLOAD_DIR":  "downloads",
 
@@ -372,7 +372,8 @@ def optimize_video(input_path: str) -> str:
 # ─────────────────────────────────────────────────────────────
 async def send_video(bot: Bot, path: str) -> bool:
     # 1. Get video metadata
-    metadata = get_video_metadata(path)
+    loop = asyncio.get_running_loop()
+    metadata = await loop.run_in_executor(None, get_video_metadata, path)
     log.info(f"Original video metadata: {metadata}")
 
     mb = Path(path).stat().st_size / 1024 / 1024
@@ -382,11 +383,11 @@ async def send_video(bot: Bot, path: str) -> bool:
         log.info(f"File is {mb:.1f} MB (exceeds 49MB limit). Starting compression...")
         duration = metadata.get("duration", 0)
         if duration > 0:
-            compressed_path = compress_video(path, duration)
+            compressed_path = await loop.run_in_executor(None, compress_video, path, duration)
             if compressed_path:
                 path = compressed_path
                 mb = Path(path).stat().st_size / 1024 / 1024
-                metadata = get_video_metadata(path)
+                metadata = await loop.run_in_executor(None, get_video_metadata, path)
             else:
                 log.warning("Compression failed. Skipping file.")
                 return False
@@ -396,7 +397,7 @@ async def send_video(bot: Bot, path: str) -> bool:
 
     # 2. Optimize video for streaming (skip if compress already added faststart)
     if not need_compress:
-        path = optimize_video(path)
+        path = await loop.run_in_executor(None, optimize_video, path)
 
     try:
         with open(path, "rb") as f:
@@ -420,8 +421,55 @@ async def send_video(bot: Bot, path: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────
-#  MAIN — one batch then exit (GitHub Actions handles the loop)
+#  CONCURRENT WORKER FOR VPS/CLOUD RUN
 # ─────────────────────────────────────────────────────────────
+compress_semaphore = asyncio.Semaphore(2)
+
+async def process_and_upload_video(bot: Bot, session, video: dict) -> bool:
+    loop = asyncio.get_running_loop()
+    
+    # 1. Extract MP4 URL (synchronous network request, run in executor)
+    mp4 = await loop.run_in_executor(None, extract_mp4, session, video["url"], video["source"])
+    if not mp4:
+        log.warning(f"[{video['id']}] No MP4 URL extracted — skipping.")
+        return False
+
+    # 2. Try direct URL upload first (async)
+    log.info(f"[{video['id']}] Attempting direct URL upload: {mp4[:80]}...")
+    try:
+        await bot.send_video(
+            chat_id=CONFIG["CHANNEL_ID"],
+            video=mp4,
+            caption="",
+            supports_streaming=True,
+            read_timeout=120,
+            write_timeout=120,
+            connect_timeout=30,
+        )
+        log.info(f"[{video['id']}] ✅ Direct URL upload succeeded!")
+        return True
+    except TelegramError as e:
+        log.warning(f"[{video['id']}] Direct URL upload failed: {e}. Falling back to download-and-upload...")
+
+    # 3. Fallback to download, compress (controlled by semaphore), and upload
+    async with compress_semaphore:
+        log.info(f"[{video['id']}] Downloading video for local processing...")
+        path = await loop.run_in_executor(None, download_video, session, mp4, video["id"])
+        if not path:
+            log.warning(f"[{video['id']}] Download failed — skipping.")
+            return False
+
+        try:
+            ok = await send_video(bot, path)
+        finally:
+            if os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except Exception as ex:
+                    log.warning(f"Failed to remove local file {path}: {ex}")
+        return ok
+
+
 async def main():
     bot    = Bot(token=CONFIG["BOT_TOKEN"])
     posted = load_posted()
@@ -432,7 +480,6 @@ async def main():
     log.info(f"Sources: {[s['name'] for s in CONFIG['SOURCES']]}")
 
     # Build a combined pool from ALL sources, round-robin style
-    # so every site gets a fair chance to contribute videos
     source_queues = {}
     for source in CONFIG["SOURCES"]:
         session = make_session(referer=source["url"])
@@ -450,10 +497,6 @@ async def main():
             if not page_vids:
                 break
             new_page_vids = [v for v in page_vids if v["id"] not in posted]
-            if not new_page_vids:
-                # If page 2 has absolutely nothing new, we might be reaching fully posted pages,
-                # but keep going to make sure we scan enough pages.
-                pass
             new_vids.extend(new_page_vids)
             page += 1
 
@@ -464,71 +507,55 @@ async def main():
             "queue": new_vids[:CONFIG["MAX_SCAN_PER_RUN"]],
         }
 
-    # Round-robin: pick one from each source in turn until target reached
+    # Round-robin: collect candidates up to MAX_SCAN_PER_RUN from each source
     source_names = list(source_queues.keys())
+    candidates = []
     attempts = 0
     max_attempts = CONFIG["MAX_SCAN_PER_RUN"] * len(source_names)
 
-    while sent < target and attempts < max_attempts:
+    while len(candidates) < CONFIG["MAX_SCAN_PER_RUN"] and attempts < max_attempts:
         made_progress = False
         for sname in source_names:
-            if sent >= target:
-                break
             q = source_queues[sname]["queue"]
             sess = source_queues[sname]["session"]
             if not q:
                 continue
-
             video = q.pop(0)
             attempts += 1
             made_progress = True
-            log.info(f"[{sent+1}/{target}] [{sname}] {video['title'][:55]}")
-
-            time.sleep(CONFIG["REQUEST_DELAY"])
-            mp4 = extract_mp4(sess, video["url"], video["source"])
-            if not mp4:
-                log.warning("  No MP4 — skipping.")
-                continue
-
-            ok = False
-            log.info(f"  Attempting direct URL upload: {mp4[:120]}")
-            try:
-                await bot.send_video(
-                    chat_id=CONFIG["CHANNEL_ID"],
-                    video=mp4,
-                    caption="",
-                    supports_streaming=True,
-                    read_timeout=120,
-                    write_timeout=120,
-                    connect_timeout=30,
-                )
-                log.info("  ✅ Direct URL upload succeeded!")
-                ok = True
-            except TelegramError as e:
-                log.warning(f"  Direct URL upload failed: {e}. Falling back to download-and-upload...")
-                
-                time.sleep(CONFIG["REQUEST_DELAY"])
-                path = download_video(sess, mp4, video["id"])
-                if not path:
-                    log.warning("  Download failed — skipping.")
-                    continue
-
-                ok = await send_video(bot, path)
-                Path(path).unlink(missing_ok=True)
-
-            if ok:
-                posted.add(video["id"])
-                save_posted(posted)
-                sent += 1
-            else:
-                log.warning("  Upload failed — skipping.")
-
+            candidates.append((video, sess))
         if not made_progress:
-            log.warning("All source queues exhausted before reaching target.")
             break
 
-    log.info(f"=== Done: {sent}/{target} videos sent ===")
+    log.info(f"Collected {len(candidates)} candidates. Processing in parallel batches of 10...")
 
+    # Process candidates in parallel batches of 10
+    batch_size = 10
+    for i in range(0, len(candidates), batch_size):
+        if sent >= target:
+            break
+
+        current_batch = candidates[i:i+batch_size]
+        log.info(f"\n=== Processing parallel batch of {len(current_batch)} videos (Uploaded: {sent}/{target}) ===")
+
+        # Create concurrent upload tasks
+        tasks = []
+        for video, sess in current_batch:
+            tasks.append(process_and_upload_video(bot, sess, video))
+
+        # Run batch concurrently
+        results = await asyncio.gather(*tasks)
+
+        # Record successes
+        for (video, sess), success in zip(current_batch, results):
+            if success:
+                posted.add(video["id"])
+                sent += 1
+
+        # Save progress back to database after each batch
+        save_posted(posted)
+
+    log.info(f"=== Done: {sent}/{target} videos sent ===")
 
 
 if __name__ == "__main__":

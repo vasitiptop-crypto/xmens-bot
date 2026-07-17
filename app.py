@@ -32,12 +32,12 @@ def run_bot_in_background():
                     await run_batch()
                 else:
                     print("ERROR: run_batch function is not imported.")
-                print("--- Batch upload run completed. Sleeping for 5 minutes ---")
+                print("--- Batch upload run completed. Sleeping for 1 minute ---")
             except Exception as e:
                 print(f"Error during batch execution: {e}", file=sys.stderr)
                 await asyncio.sleep(60)
                 continue
-            await asyncio.sleep(300) # Sleep for 5 minutes (300 seconds)
+            await asyncio.sleep(60) # Sleep for 1 minute (60 seconds)
 
     loop.run_until_complete(bot_loop())
 
@@ -48,7 +48,7 @@ bot_thread.start()
 # Define the Gradio dashboard interface
 with gr.Blocks(title="Telegram Video Uploader") as demo:
     gr.Markdown("# 🤖 Telegram Video Uploader status: Running")
-    gr.Markdown("This space runs the bot uploader loop in the background every 5 minutes.")
+    gr.Markdown("This space runs the bot uploader loop in the background every 1 minute.")
     gr.Markdown("To prevent this free space from sleeping, configure a free pinging service (like UptimeRobot) to hit this space URL every 30 minutes.")
 
 # Gradio defaults to port 7860
