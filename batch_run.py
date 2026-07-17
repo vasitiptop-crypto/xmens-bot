@@ -76,11 +76,7 @@ CONFIG = {
     ],
 }
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/125.0.0.0 Safari/537.36"
-)
+USER_AGENT = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
 MP4_REGEX = r'https?://[^\s"\'<>]+\.mp4[^\s"\'<>]*'
 
 logging.basicConfig(
@@ -121,7 +117,7 @@ def make_session(referer="") -> requests.Session:
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate",
         "Connection":      "keep-alive",
-        "Referer":         referer or "https://mydesi.rest/",
+        "Referer":         referer or "https://www.sexyvideoindian.com/",
     })
     return s
 
