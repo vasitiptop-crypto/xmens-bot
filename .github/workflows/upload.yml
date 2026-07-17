@@ -76,3 +76,18 @@ jobs:
           git add posted_videos.json
           git diff --staged --quiet || git commit -m "chore: update posted state [skip ci]"
           git push origin HEAD:master
+
+      - name: 🔄 Trigger next run immediately if videos were uploaded
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -f "sent_count.txt" ] && [ "$(cat sent_count.txt)" -gt 0 ] && [ ! -z "$GH_PAT" ]; then
+            echo "Videos were uploaded! Triggering next run immediately..."
+            curl -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${{ github.repository }}/actions/workflows/upload.yml/dispatches \
+              -d '{"ref":"master"}'
+          else
+            echo "No videos uploaded or GH_PAT secret is missing. Stopping chain run."
+          fi
