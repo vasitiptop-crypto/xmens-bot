@@ -25,8 +25,8 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003956199030")
 CONFIG = {
     "BOT_TOKEN":        BOT_TOKEN,
     "CHANNEL_ID":       CHANNEL_ID,
-    "VIDEOS_PER_BATCH": 20,       # send 20 per Hugging Face run
-    "MAX_SCAN_PER_RUN": 200,      # scan up to 200 cards to find 20 working ones
+    "VIDEOS_PER_BATCH": 10,       # send 10 per Hugging Face run
+    "MAX_SCAN_PER_RUN": 100,      # scan up to 100 cards to find 10 working ones
     "REQUEST_DELAY":    0.5,
 
     # database file
@@ -307,8 +307,8 @@ def compress_video(input_path: str, duration: float) -> str | None:
     # Calculate target bitrate (bits per second)
     total_bitrate = (target_size_bytes * 8) / duration
     
-    # Reserve 64k for audio (smaller = faster)
-    audio_bitrate = 64 * 1024
+    # Reserve 32k for audio (smaller = faster)
+    audio_bitrate = 32 * 1024
     video_bitrate = int(total_bitrate - audio_bitrate)
     
     # Ensure video bitrate is reasonable (minimum 100 kbps)
@@ -320,6 +320,7 @@ def compress_video(input_path: str, duration: float) -> str | None:
     try:
         cmd = [
             "ffmpeg", "-y", "-i", input_path,
+            "-vf", "scale='min(640,iw)':-2",
             "-b:v", f"{video_bitrate}",
             "-maxrate", f"{video_bitrate}",
             "-bufsize", f"{video_bitrate * 2}",
@@ -330,7 +331,7 @@ def compress_video(input_path: str, duration: float) -> str | None:
             "-profile:v", "high",
             "-level:v", "4.0",
             "-c:a", "aac",
-            "-b:a", "64k",
+            "-b:a", "32k",
             "-movflags", "+faststart",
             output_path
         ]
