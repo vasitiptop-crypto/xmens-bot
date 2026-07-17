@@ -586,28 +586,49 @@ async def main():
 
 
 async def main_loop():
-    """Runs main() repeatedly for up to 4.3 minutes (260s) to simulate 24/7 continuous runs on GitHub Actions."""
+    """Runs main() repeatedly for up to 25 minutes (1500s) to maximize uploads per GitHub Actions run.
+    Self-chains via workflow dispatch so videos upload continuously 24/7."""
+    MAX_RUN_SECONDS = 1500  # 25 minutes — leave 5 min buffer for git commit + chaining
+    MAX_EMPTY_RETRIES = 3   # retry this many times before giving up when no videos found
+    
     start_time = time.time()
     iteration = 1
     total_sent = 0
+    consecutive_empty = 0
     
-    log.info("Starting continuous uploader loop execution...")
-    while time.time() - start_time < 260:
-        log.info(f"\n--- Starting Loop Iteration {iteration} (Elapsed: {int(time.time() - start_time)}s) ---")
+    log.info("Starting continuous uploader loop (25 min max)...")
+    
+    while time.time() - start_time < MAX_RUN_SECONDS:
+        # Rotate source order each iteration so we don't always hammer the same site first
+        rotation = (iteration - 1) % len(CONFIG["SOURCES"])
+        CONFIG["SOURCES"] = CONFIG["SOURCES"][rotation:] + CONFIG["SOURCES"][:rotation]
+        
+        elapsed = int(time.time() - start_time)
+        remaining = MAX_RUN_SECONDS - (time.time() - start_time)
+        log.info(f"\n--- Iteration {iteration} | Elapsed: {elapsed}s | Remaining: {int(remaining)}s | Total uploaded: {total_sent} ---")
+        
         sent = await main()
         total_sent += sent
         
-        # If no new videos were sent in this run, exit early to save runner minutes
         if sent == 0:
-            log.info("No new videos uploaded in this iteration. Exiting early.")
-            break
-            
-        iteration += 1
-        log.info("Sleeping 5 seconds before next check...")
-        await asyncio.sleep(5)
+            consecutive_empty += 1
+            if consecutive_empty >= MAX_EMPTY_RETRIES:
+                log.info(f"No videos found for {MAX_EMPTY_RETRIES} consecutive iterations. Stopping loop.")
+                break
+            backoff = 10 * consecutive_empty  # 10s, 20s, 30s
+            log.info(f"No videos this iteration ({consecutive_empty}/{MAX_EMPTY_RETRIES} empty). "
+                     f"Retrying in {backoff}s...")
+            await asyncio.sleep(backoff)
+        else:
+            consecutive_empty = 0  # reset on success
+            log.info("Sleeping 5 seconds before next iteration...")
+            await asyncio.sleep(5)
         
-    log.info(f"Continuous uploader run loop finished. Total uploaded: {total_sent}")
-    # Write sent count to file for GitHub Actions to read
+        iteration += 1
+    
+    log.info(f"=== Continuous uploader finished. Total uploaded: {total_sent} across {iteration - 1} iterations ===")
+    
+    # Write sent count to file for GitHub Actions self-chaining step
     try:
         with open("sent_count.txt", "w") as f:
             f.write(str(total_sent))

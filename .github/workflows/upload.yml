@@ -3,10 +3,10 @@ name: 🤖 Auto Video Uploader
 on:
   schedule:
     # Every 5 minutes (GitHub's minimum interval)
-    # = 20 videos every 5 min = ~5,760 videos/day
+    # Acts as a heartbeat — self-chaining handles immediate re-runs
     - cron: "*/5 * * * *"
 
-  # Manual trigger from Actions tab anytime
+  # Manual trigger from Actions tab (backup)
   workflow_dispatch:
 
 # Prevent two runs from committing posted_videos.json at the same time
@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   upload:
-    name: Upload 20 Videos
+    name: Upload Videos (Continuous)
     runs-on: ubuntu-latest
-    timeout-minutes: 25       # 20 videos max timeout
+    timeout-minutes: 30       # 25 min loop + 5 min buffer for git commit + chaining
 
     permissions:
       contents: write
@@ -41,7 +41,9 @@ jobs:
       - name: 📦 Install dependencies
         run: pip install -r requirements.txt
 
-      - name: 🚀 Upload 20 videos to channel
+      - name: 🚀 Upload videos to channel (25 min continuous loop)
+        id: upload
+        continue-on-error: true    # Always proceed to save state even if script crashes
         env:
           BOT_TOKEN:  ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
@@ -77,17 +79,29 @@ jobs:
           git diff --staged --quiet || git commit -m "chore: update posted state [skip ci]"
           git push origin HEAD:master
 
-      - name: 🔄 Trigger next run immediately if videos were uploaded
+      - name: 🔄 Self-chain — trigger next run immediately
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          if [ -f "sent_count.txt" ] && [ "$(cat sent_count.txt)" -gt 0 ] && [ ! -z "$GH_PAT" ]; then
-            echo "Videos were uploaded! Triggering next run immediately..."
-            curl -X POST \
-              -H "Authorization: token $GH_PAT" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/${{ github.repository }}/actions/workflows/upload.yml/dispatches \
-              -d '{"ref":"master"}'
+          # Always try to chain the next run, regardless of upload count
+          # This keeps the bot running 24/7 without relying solely on cron
+          if [ -z "$GH_PAT" ]; then
+            echo "⚠️ GH_PAT secret is not set. Relying on cron schedule (every 5 min) for next run."
+            echo "To enable instant self-chaining, add a PAT with 'repo' + 'workflow' scopes as GH_PAT secret."
+            exit 0
+          fi
+
+          echo "Triggering next workflow run immediately..."
+          # Small delay to avoid GitHub API rate limits on rapid self-chains
+          sleep 10
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token $GH_PAT" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/upload.yml/dispatches \
+            -d '{"ref":"master"}')
+
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "✅ Next run triggered successfully!"
           else
-            echo "No videos uploaded or GH_PAT secret is missing. Stopping chain run."
+            echo "⚠️ Self-chain trigger returned HTTP $HTTP_CODE. Next run will use cron schedule."
           fi
