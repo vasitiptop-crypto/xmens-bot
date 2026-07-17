@@ -26,10 +26,10 @@ FFMPEG_PATH = shutil.which("ffmpeg") or "/usr/local/bin/ffmpeg"
 FFPROBE_PATH = shutil.which("ffprobe") or "/usr/local/bin/ffprobe"
 
 # ─────────────────────────────────────────────────────────────
-#  CONFIG — reads from environment variables
+#  CONFIG — reads from environment variables (falsy fallback)
 # ─────────────────────────────────────────────────────────────
-BOT_TOKEN  = os.environ.get("BOT_TOKEN",  "8815719330:AAG2ZB8Helpzr1OKE65D_JXN19fWuZes9c8")
-CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003956199030")
+BOT_TOKEN  = os.environ.get("BOT_TOKEN") or "8815719330:AAG2ZB8Helpzr1OKE65D_JXN19fWuZes9c8"
+CHANNEL_ID = os.environ.get("CHANNEL_ID") or "-1003956199030"
 
 CONFIG = {
     "BOT_TOKEN":        BOT_TOKEN,
