@@ -65,6 +65,24 @@ CONFIG = {
             "video_tag_selector": "video source, source[src]",
             "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
         },
+        {
+            "name": "DesiTales2",
+            "url":  "https://www.desitales2.com/videos/",
+            "card_selector":      "div.item a",
+            "video_tag_selector": "",
+            "iframe_selector":    "",
+            "pagination_url":     "https://www.desitales2.com/videos/page/{page}/",
+            "no_api":             True,
+        },
+        {
+            "name": "SpicyMMS",
+            "url":  "https://www.spicymms.com/",
+            "card_selector":      "div.item a, .thumb a",
+            "video_tag_selector": "",
+            "iframe_selector":    "",
+            "pagination_url":     "https://www.spicymms.com/latest-updates/{page}/",
+            "no_api":             True,
+        },
     ],
 }
 
@@ -169,6 +187,8 @@ def scrape_source(session, source, page=1) -> list:
     api_url = source["url"].rstrip("/") + f"/wp-json/wp/v2/posts?page={page}&per_page=20"
     videos = []
     try:
+        if source.get("no_api"):
+            raise ValueError("WordPress REST API disabled for this source")
         r = session.get(api_url, timeout=20)
         r.raise_for_status()
         data = r.json()
@@ -264,9 +284,21 @@ def extract_mp4(session, page_url, source) -> str | None:
                         return m[0].strip()
                 except Exception:
                     pass
-    # C: page regex
+    # C: page regex (with advanced tokenized URL filtering for KVS)
     matches = re.findall(MP4_REGEX, str(soup))
-    valid_matches = [m.strip() for m in matches if "_preview" not in m]
+    valid_matches = []
+    for m in matches:
+        m_str = m.strip()
+        # Filter out preview formats, WebP/JPG screenshots, and preview strings
+        if "_preview" in m_str or ".jpg" in m_str or ".png" in m_str or "preview.mp4" in m_str:
+            continue
+        valid_matches.append(m_str)
+        
+    # Prioritize URLs containing both "get_file" and "v-acctoken"
+    token_matches = [m for m in valid_matches if "v-acctoken" in m]
+    if token_matches:
+        return token_matches[0]
+        
     return valid_matches[0] if valid_matches else None
 
 
@@ -284,7 +316,7 @@ def download_video(session, mp4_url, vid_id) -> str | None:
             
             # Content-type validation
             ctype = r.headers.get("Content-Type", "").lower()
-            if "text/html" in ctype or "text/plain" in ctype:
+            if "video" not in ctype:
                 log.warning(f"Skipped download: Content-Type is '{ctype}', not a video.")
                 return None
                 
