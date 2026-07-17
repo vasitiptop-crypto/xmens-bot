@@ -566,7 +566,30 @@ async def main():
         save_posted(posted)
 
     log.info(f"=== Done: {sent}/{target} videos sent ===")
+    return sent
+
+
+async def main_loop():
+    """Runs main() repeatedly for up to 4.3 minutes (260s) to simulate 24/7 continuous runs on GitHub Actions."""
+    start_time = time.time()
+    iteration = 1
+    
+    log.info("Starting continuous uploader loop execution...")
+    while time.time() - start_time < 260:
+        log.info(f"\n--- Starting Loop Iteration {iteration} (Elapsed: {int(time.time() - start_time)}s) ---")
+        sent = await main()
+        
+        # If no new videos were sent in this run, exit early to save runner minutes
+        if sent == 0:
+            log.info("No new videos uploaded in this iteration. Exiting early.")
+            break
+            
+        iteration += 1
+        log.info("Sleeping 5 seconds before next check...")
+        await asyncio.sleep(5)
+        
+    log.info("Continuous uploader run loop finished.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main_loop())
