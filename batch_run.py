@@ -153,29 +153,38 @@ def fetch_soup(session, url):
         r.raise_for_status()
         return BeautifulSoup(r.text, "html.parser")
     except Exception as e:
-        log.warning(f"Direct fetch failed for {url}: {e}. Retrying with free proxies...")
-        
-    # 2. Try proxy fetch fallback
+        log.warning(f"Direct fetch failed for {url}: {e}")
+
+    # 2. Try Google webcache fallback (works from datacenter IPs)
+    try:
+        from urllib.parse import quote_plus
+        cache_url = f"https://webcache.googleusercontent.com/search?q=cache:{quote_plus(url)}"
+        r = requests.get(cache_url, headers={"User-Agent": USER_AGENT}, timeout=10)
+        if r.status_code == 200 and len(r.text) > 1000:
+            log.info(f"Google webcache fetch succeeded for {url}")
+            return BeautifulSoup(r.text, "html.parser")
+    except Exception as e:
+        log.debug(f"Webcache failed: {e}")
+
+    # 3. Try free proxy fallback
     proxies_list = get_free_proxies()
     if not proxies_list:
         return None
         
-    # Try up to 15 proxies
     for p in proxies_list[:15]:
         log.info(f"Trying proxy {p} for {url}...")
         try:
             px = {"http": f"http://{p}", "https": f"http://{p}"}
-            # Use direct requests call with proxy to avoid session conflicts
             r = requests.get(url, headers={"User-Agent": USER_AGENT}, proxies=px, timeout=6)
             if r.status_code == 200:
-                log.info(f"✅ Proxy fetch succeeded using {p}!")
+                log.info(f"Proxy fetch succeeded using {p}!")
                 return BeautifulSoup(r.text, "html.parser")
             else:
                 log.warning(f"Proxy {p} returned status code {r.status_code}")
         except Exception as ex:
             log.debug(f"Proxy {p} failed: {ex}")
             
-    log.error(f"All proxies failed to fetch {url}.")
+    log.error(f"All fetch methods failed for {url}.")
     return None
 
 
@@ -201,11 +210,14 @@ def scrape_source(session, source, page=1) -> list:
                 continue
             vid_id = re.sub(r"[^a-zA-Z0-9_-]", "_",
                             source["name"] + "_" + href.split("//")[-1])[:100]
+            # Store rendered content so extract_mp4 can use it without visiting the page
+            api_content = post.get("content", {}).get("rendered", "")
             videos.append({
                 "id": vid_id,
                 "url": href,
                 "title": title[:200],
-                "source": source
+                "source": source,
+                "api_content": api_content,
             })
     except Exception as e:
         log.warning(f"[{source['name']}] REST API failed for page {page}: {e}. Trying fallback HTML scrape...")
@@ -260,16 +272,29 @@ def scrape_source(session, source, page=1) -> list:
 # ─────────────────────────────────────────────────────────────
 #  EXTRACT MP4
 # ─────────────────────────────────────────────────────────────
-def extract_mp4(session, page_url, source) -> str | None:
+def extract_mp4(session, page_url, source, api_content="") -> str | None:
+    # 0: Try to extract from REST API content first (bypasses Cloudflare entirely)
+    if api_content:
+        api_matches = re.findall(MP4_REGEX, api_content)
+        valid_api = [m.strip() for m in api_matches
+                     if "_preview" not in m and ".jpg" not in m and ".png" not in m and "preview.mp4" not in m]
+        if valid_api:
+            # Clean query params for direct file URL
+            best = valid_api[0].split("?")[0]
+            log.info(f"Extracted MP4 from REST API content (no page visit needed): {best[:80]}")
+            return best
+
     soup = fetch_soup(session, page_url)
     if not soup:
         return None
     # A: video tag
-    tag = soup.select_one(source.get("video_tag_selector", "video source"))
-    if tag:
-        src = (tag.get("src") or tag.get("data-src") or "").strip()
-        if ".mp4" in src:
-            return src
+    vsel = source.get("video_tag_selector", "video source")
+    if vsel:  # skip if selector is empty string
+        tag = soup.select_one(vsel)
+        if tag:
+            src = (tag.get("src") or tag.get("data-src") or "").strip()
+            if ".mp4" in src:
+                return src
     # B: iframe
     isel = source.get("iframe_selector")
     if isel:
@@ -289,7 +314,6 @@ def extract_mp4(session, page_url, source) -> str | None:
     valid_matches = []
     for m in matches:
         m_str = m.strip()
-        # Filter out preview formats, WebP/JPG screenshots, and preview strings
         if "_preview" in m_str or ".jpg" in m_str or ".png" in m_str or "preview.mp4" in m_str:
             continue
         valid_matches.append(m_str)
@@ -448,7 +472,8 @@ async def process_and_upload_video(bot: Bot, session, video: dict) -> bool:
     loop = asyncio.get_running_loop()
     
     # 1. Extract MP4 URL (synchronous network request, run in executor)
-    mp4 = await loop.run_in_executor(None, extract_mp4, session, video["url"], video["source"])
+    api_content = video.get("api_content", "")
+    mp4 = await loop.run_in_executor(None, extract_mp4, session, video["url"], video["source"], api_content)
     if not mp4:
         log.warning(f"[{video['id']}] No MP4 URL extracted — skipping.")
         return False
@@ -598,10 +623,13 @@ async def main_loop():
     
     log.info("Starting continuous uploader loop (25 min max)...")
     
+    # Keep original source list for clean rotation
+    original_sources = list(CONFIG["SOURCES"])
+    
     while time.time() - start_time < MAX_RUN_SECONDS:
-        # Rotate source order each iteration so we don't always hammer the same site first
-        rotation = (iteration - 1) % len(CONFIG["SOURCES"])
-        CONFIG["SOURCES"] = CONFIG["SOURCES"][rotation:] + CONFIG["SOURCES"][:rotation]
+        # Rotate source order each iteration (clean rotation from original list)
+        rotation = (iteration - 1) % len(original_sources)
+        CONFIG["SOURCES"] = original_sources[rotation:] + original_sources[:rotation]
         
         elapsed = int(time.time() - start_time)
         remaining = MAX_RUN_SECONDS - (time.time() - start_time)
