@@ -265,13 +265,23 @@ def download_video(session, mp4_url, vid_id) -> str | None:
                 
             # Content-length validation
             clength = int(r.headers.get("Content-Length", 0))
-            if clength > 0 and clength < 50 * 1024:
-                log.warning(f"Skipped download: file size is too small ({clength} bytes).")
-                return None
+            if clength > 0:
+                if clength < 50 * 1024:
+                    log.warning(f"Skipped download: file size is too small ({clength} bytes).")
+                    return None
+                if clength > 50 * 1024 * 1024:
+                    log.warning(f"Skipped download: file size exceeds 50MB limit ({clength / 1024 / 1024:.1f} MB).")
+                    return None
 
+            downloaded = 0
             with open(dest, "wb") as f:
                 for chunk in r.iter_content(2 * 1024 * 1024):
                     f.write(chunk)
+                    downloaded += len(chunk)
+                    if downloaded > 50 * 1024 * 1024:
+                        log.warning("Skipped download: downloaded content size exceeded 50MB during stream.")
+                        dest.unlink(missing_ok=True)
+                        return None
                     
         # File size verification
         actual_size = dest.stat().st_size
@@ -311,58 +321,6 @@ def get_video_metadata(path: str) -> dict:
         log.warning(f"ffprobe failed: {e}")
     return {}
 
-def compress_video(input_path: str, duration: float) -> str | None:
-    """Compresses the video to be just under 49MB using ffmpeg re-encoding."""
-    if duration <= 0:
-        return None
-        
-    output_path = input_path.replace(".mp4", "_compressed.mp4")
-    # Target size: 48.5 MB to be safe
-    target_size_bytes = 48.5 * 1024 * 1024
-    
-    # Calculate target bitrate (bits per second)
-    total_bitrate = (target_size_bytes * 8) / duration
-    
-    # Reserve 32k for audio (smaller = faster)
-    audio_bitrate = 32 * 1024
-    video_bitrate = int(total_bitrate - audio_bitrate)
-    
-    # Ensure video bitrate is reasonable (minimum 100 kbps)
-    if video_bitrate < 100 * 1024:
-        video_bitrate = 100 * 1024
-        
-    log.info(f"Compressing {os.path.basename(input_path)} to fit under 49MB (duration={duration:.1f}s, target_bitrate={video_bitrate//1024}k)...")
-    
-    try:
-        cmd = [
-            FFMPEG_PATH, "-y", "-i", input_path,
-            "-vf", "scale='min(640,iw)':-2",
-            "-b:v", f"{video_bitrate}",
-            "-maxrate", f"{video_bitrate}",
-            "-bufsize", f"{video_bitrate * 2}",
-            "-preset", "ultrafast",
-            "-threads", "0",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-profile:v", "high",
-            "-level:v", "4.0",
-            "-c:a", "aac",
-            "-b:a", "32k",
-            "-movflags", "+faststart",
-            output_path
-        ]
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
-        if res.returncode == 0 and os.path.exists(output_path):
-            compressed_mb = os.path.getsize(output_path) / 1024 / 1024
-            log.info(f"Compression completed successfully. Compressed size: {compressed_mb:.1f} MB")
-            os.replace(output_path, input_path)
-            return input_path
-    except Exception as e:
-        log.warning(f"ffmpeg compression failed: {e}")
-        if os.path.exists(output_path):
-            os.unlink(output_path)
-    return None
-
 def optimize_video(input_path: str) -> str:
     """Relocates the moov atom to the beginning of the MP4 file for fast start streaming."""
     output_path = input_path.replace(".mp4", "_optimized.mp4")
@@ -393,30 +351,8 @@ async def send_video(bot: Bot, path: str) -> bool:
     metadata = await loop.run_in_executor(None, get_video_metadata, path)
     log.info(f"Original video metadata: {metadata}")
 
-    mb = Path(path).stat().st_size / 1024 / 1024
-    need_compress = mb > 49
-    
-    if need_compress:
-        log.info(f"File is {mb:.1f} MB (exceeds 49MB limit). Starting compression...")
-        duration = metadata.get("duration", 0)
-        if duration <= 0:
-            # Fallback estimation: Assume a standard average streaming bitrate of 1.2 Mbps (150 KB/s)
-            file_size_bytes = Path(path).stat().st_size
-            duration = max(10.0, file_size_bytes / (150 * 1024))
-            log.info(f"ffprobe failed or returned 0 duration. Estimating duration as {duration:.1f}s based on file size.")
-            
-        compressed_path = await loop.run_in_executor(None, compress_video, path, duration)
-        if compressed_path:
-            path = compressed_path
-            mb = Path(path).stat().st_size / 1024 / 1024
-            metadata = await loop.run_in_executor(None, get_video_metadata, path)
-        else:
-            log.warning("Compression failed. Skipping file.")
-            return False
-
-    # 2. Optimize video for streaming (skip if compress already added faststart)
-    if not need_compress:
-        path = await loop.run_in_executor(None, optimize_video, path)
+    # Optimize video for streaming
+    path = await loop.run_in_executor(None, optimize_video, path)
 
     try:
         with open(path, "rb") as f:
