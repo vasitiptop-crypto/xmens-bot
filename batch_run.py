@@ -14,7 +14,7 @@ import requests
 from pathlib import Path
 from bs4 import BeautifulSoup
 from telegram import Bot
-from telegram.error import TelegramError
+from telegram.error import TelegramError, RetryAfter
 from dotenv import load_dotenv
 import shutil
 
@@ -354,25 +354,32 @@ async def send_video(bot: Bot, path: str) -> bool:
     # Optimize video for streaming
     path = await loop.run_in_executor(None, optimize_video, path)
 
-    try:
-        with open(path, "rb") as f:
-            await bot.send_video(
-                chat_id=CONFIG["CHANNEL_ID"],
-                video=f,
-                caption="",
-                supports_streaming=True,
-                width=metadata.get("width"),
-                height=metadata.get("height"),
-                duration=metadata.get("duration"),
-                read_timeout=120,
-                write_timeout=120,
-                connect_timeout=30,
-            )
-        log.info("✅ Upload OK")
-        return True
-    except TelegramError as e:
-        log.error(f"Telegram error: {e}")
-        return False
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            with open(path, "rb") as f:
+                await bot.send_video(
+                    chat_id=CONFIG["CHANNEL_ID"],
+                    video=f,
+                    caption="",
+                    supports_streaming=True,
+                    width=metadata.get("width"),
+                    height=metadata.get("height"),
+                    duration=metadata.get("duration"),
+                    read_timeout=120,
+                    write_timeout=120,
+                    connect_timeout=30,
+                )
+            log.info("✅ Upload OK")
+            return True
+        except RetryAfter as e:
+            wait_time = e.retry_after + 2
+            log.warning(f"Telegram rate limit hit (RetryAfter). Sleeping for {wait_time}s before attempt {attempt+2}...")
+            await asyncio.sleep(wait_time)
+        except TelegramError as e:
+            log.error(f"Telegram error: {e}")
+            break
+    return False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -389,22 +396,29 @@ async def process_and_upload_video(bot: Bot, session, video: dict) -> bool:
         log.warning(f"[{video['id']}] No MP4 URL extracted — skipping.")
         return False
 
-    # 2. Try direct URL upload first (async)
-    log.info(f"[{video['id']}] Attempting direct URL upload: {mp4[:80]}...")
-    try:
-        await bot.send_video(
-            chat_id=CONFIG["CHANNEL_ID"],
-            video=mp4,
-            caption="",
-            supports_streaming=True,
-            read_timeout=120,
-            write_timeout=120,
-            connect_timeout=30,
-        )
-        log.info(f"[{video['id']}] ✅ Direct URL upload succeeded!")
-        return True
-    except TelegramError as e:
-        log.warning(f"[{video['id']}] Direct URL upload failed: {e}. Falling back to download-and-upload...")
+    # 2. Try direct URL upload first (async) with rate-limit retry
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        log.info(f"[{video['id']}] Attempting direct URL upload (Attempt {attempt+1}/{max_attempts}): {mp4[:80]}...")
+        try:
+            await bot.send_video(
+                chat_id=CONFIG["CHANNEL_ID"],
+                video=mp4,
+                caption="",
+                supports_streaming=True,
+                read_timeout=120,
+                write_timeout=120,
+                connect_timeout=30,
+            )
+            log.info(f"[{video['id']}] ✅ Direct URL upload succeeded!")
+            return True
+        except RetryAfter as e:
+            wait_time = e.retry_after + 2
+            log.warning(f"[{video['id']}] Rate limit hit! Sleeping for {wait_time}s before retry...")
+            await asyncio.sleep(wait_time)
+        except TelegramError as e:
+            log.warning(f"[{video['id']}] Direct URL upload failed: {e}. Falling back to download-and-upload...")
+            break
 
     # 3. Fallback to download, compress (controlled by semaphore), and upload
     async with compress_semaphore:
