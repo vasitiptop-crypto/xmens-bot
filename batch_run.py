@@ -62,6 +62,15 @@ CONFIG = {
             "pagination_url":     "https://www.spicymms.com/latest-updates/{page}/",
             "no_api":             True,
         },
+        {
+            "name": "DesiKahani2",
+            "url":  "https://www.desikahani2.net/videos/",
+            "card_selector":      "div.item a, .thumb a",
+            "video_tag_selector": "",
+            "iframe_selector":    "",
+            "pagination_url":     "https://www.desikahani2.net/videos/latest-updates/{page}/",
+            "no_api":             True,
+        },
     ],
 }
 
@@ -78,14 +87,37 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 #  STATE
 # ─────────────────────────────────────────────────────────────
-def load_posted() -> set:
+def normalize_slug(slug_or_id: str) -> str:
+    s = slug_or_id.lower()
+    # Remove domains and paths
+    s = re.sub(r'https?://|www\.[a-z0-9]+\.[a-z]+|/videos?/|/video/|/|videos_|_videos_|video_|_video_', '_', s)
+    words = re.findall(r'[a-z]+', s)
+    
+    # List of domain/platform/stop words to ignore
+    ignore_words = {
+        # Domains/sources
+        'desi', 'tales', 'desitales', 'spicymms', 'desikahani', 'allsex', 'auntymazax', 'darkero', 
+        'mydesi', 'sexyvideoindian', 'viralkand', 'com', 'net', 'org', 'co', 'videos', 'video', 'www',
+        # Stop words
+        'and', 'the', 'in', 'of', 'a', 'to', 'for', 'with', 'on', 'at', 'by', 'an', 'ki', 'ke', 'ko', 
+        'se', 'mein', 'sath', 'wali', 'ka', 'kiya', 'kar', 'yo', 'hot', 'sexy', 'xxx', 'mms', 'desi'
+    }
+    
+    filtered_words = [w for w in words if w not in ignore_words and len(w) > 2]
+    return '_'.join(filtered_words)
+
+
+def load_posted() -> tuple[set, set]:
     p = Path(CONFIG["POSTED_DB"])
+    posted_ids = set()
+    posted_slugs = set()
     if p.exists():
         try:
-            return set(json.loads(p.read_text()).get("posted", []))
+            posted_ids = set(json.loads(p.read_text()).get("posted", []))
+            posted_slugs = {normalize_slug(pid) for pid in posted_ids}
         except Exception:
             pass
-    return set()
+    return posted_ids, posted_slugs
 
 
 def save_posted(ids: set):
@@ -507,11 +539,11 @@ async def process_and_upload_video(bot: Bot, session, video: dict) -> bool:
 
 async def main():
     bot    = Bot(token=CONFIG["BOT_TOKEN"])
-    posted = load_posted()
+    posted_ids, posted_slugs = load_posted()
     target = CONFIG["VIDEOS_PER_BATCH"]
     sent   = 0
 
-    log.info(f"=== Batch run | target={target} | already posted={len(posted)} ===")
+    log.info(f"=== Batch run | target={target} | already posted={len(posted_ids)} ===")
     log.info(f"Sources: {[s['name'] for s in CONFIG['SOURCES']]}")
 
     # Build a combined pool from ALL sources, round-robin style
@@ -523,10 +555,13 @@ async def main():
         all_vids = scrape_source(session, source, page=1)
         new_vids = []
         seen_ids = set()
+        seen_slugs = set()
         for v in all_vids:
-            if v["id"] not in posted and v["id"] not in seen_ids:
+            v_slug = normalize_slug(v["id"])
+            if v["id"] not in posted_ids and v_slug not in posted_slugs and v["id"] not in seen_ids and v_slug not in seen_slugs:
                 new_vids.append(v)
                 seen_ids.add(v["id"])
+                seen_slugs.add(v_slug)
         
         # If we need more videos, traverse older pages to find unique, unposted ones
         page = 2
@@ -538,9 +573,11 @@ async def main():
                 break
             new_page_vids = []
             for v in page_vids:
-                if v["id"] not in posted and v["id"] not in seen_ids:
+                v_slug = normalize_slug(v["id"])
+                if v["id"] not in posted_ids and v_slug not in posted_slugs and v["id"] not in seen_ids and v_slug not in seen_slugs:
                     new_page_vids.append(v)
                     seen_ids.add(v["id"])
+                    seen_slugs.add(v_slug)
             new_vids.extend(new_page_vids)
             page += 1
 
@@ -593,11 +630,12 @@ async def main():
         # Record successes
         for (video, sess), success in zip(current_batch, results):
             if success:
-                posted.add(video["id"])
+                posted_ids.add(video["id"])
+                posted_slugs.add(normalize_slug(video["id"]))
                 sent += 1
 
         # Save progress back to database after each batch
-        save_posted(posted)
+        save_posted(posted_ids)
 
     log.info(f"=== Done: {sent}/{target} videos sent ===")
     return sent
