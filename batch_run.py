@@ -45,27 +45,6 @@ CONFIG = {
     # ── ADD MORE SITES HERE ───────────────────────────────────
     "SOURCES": [
         {
-            "name": "DarkEro",
-            "url":  "https://darkero.com/",
-            "card_selector":      "h2.entry-title a",
-            "video_tag_selector": "video source, source[src]",
-            "iframe_selector":    "",
-        },
-        {
-            "name": "SexyVideoIndian",
-            "url":  "https://www.sexyvideoindian.com/",
-            "card_selector":      "div.video-block a.thumb, div.post-card a, article a",
-            "video_tag_selector": "video source, source[src]",
-            "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
-        },
-        {
-            "name": "DesiMMS",
-            "url":  "https://www.desimms.com.co/",
-            "card_selector":      "div.video-block a.thumb, div.post-card a, article.loop-video a",
-            "video_tag_selector": "video source, source[src]",
-            "iframe_selector":    "div.responsive-player iframe, div.video-player iframe",
-        },
-        {
             "name": "DesiTales2",
             "url":  "https://www.desitales2.com/videos/",
             "card_selector":      "div.item a",
@@ -309,7 +288,13 @@ def extract_mp4(session, page_url, source, api_content="") -> str | None:
                         return m[0].strip()
                 except Exception:
                     pass
-    # C: page regex (with advanced tokenized URL filtering for KVS)
+    # C: Try KVS player direct JavaScript variable extraction (avoids tracker pixel gifs in event_reporting)
+    kvs_matches = re.findall(r"\bvideo_url\w*:\s*['\"](https?://[^'\"]+)['\"]", str(soup))
+    valid_kvs = [u.strip() for u in kvs_matches if ".mp4" in u]
+    if valid_kvs:
+        return valid_kvs[0]
+
+    # D: page regex (with advanced tokenized URL filtering for KVS)
     matches = re.findall(MP4_REGEX, str(soup))
     valid_matches = []
     for m in matches:
@@ -536,7 +521,12 @@ async def main():
         
         # Scrape page 1
         all_vids = scrape_source(session, source, page=1)
-        new_vids = [v for v in all_vids if v["id"] not in posted]
+        new_vids = []
+        seen_ids = set()
+        for v in all_vids:
+            if v["id"] not in posted and v["id"] not in seen_ids:
+                new_vids.append(v)
+                seen_ids.add(v["id"])
         
         # If we need more videos, traverse older pages to find unique, unposted ones
         page = 2
@@ -546,7 +536,11 @@ async def main():
             page_vids = scrape_source(session, source, page=page)
             if not page_vids:
                 break
-            new_page_vids = [v for v in page_vids if v["id"] not in posted]
+            new_page_vids = []
+            for v in page_vids:
+                if v["id"] not in posted and v["id"] not in seen_ids:
+                    new_page_vids.append(v)
+                    seen_ids.add(v["id"])
             new_vids.extend(new_page_vids)
             page += 1
 
