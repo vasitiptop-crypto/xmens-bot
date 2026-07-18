@@ -1,6 +1,10 @@
 name: 🤖 Auto Video Uploader
 
 on:
+  push:
+    branches:
+      - master
+      - main
   schedule:
     # Every 5 minutes (GitHub's minimum interval)
     # Acts as a heartbeat — self-chaining handles immediate re-runs
